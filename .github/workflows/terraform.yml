@@ -1,0 +1,106 @@
+name: Terraform
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Terraform action
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      confirm:
+        description: Type "yes" to confirm apply or destroy
+        required: false
+        default: ""
+
+concurrency:
+  group: terraform-db
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    env:
+      TF_VAR_enable_managed_db: ${{ vars.ENABLE_MANAGED_DB || 'false' }}
+      TF_VAR_atlas_public_key: ${{ secrets.MONGODB_ATLAS_PUBLIC_KEY }}
+      TF_VAR_atlas_private_key: ${{ secrets.MONGODB_ATLAS_PRIVATE_KEY }}
+      TF_VAR_atlas_org_id: ${{ secrets.MONGODB_ATLAS_ORG_ID }}
+      TF_VAR_db_password: ${{ secrets.MONGODB_ATLAS_DB_PASSWORD }}
+    steps:
+      - name: Confirm apply or destroy
+        if: (inputs.action == 'apply' || inputs.action == 'destroy') && inputs.confirm != 'yes'
+        run: |
+          echo "::error::${{ inputs.action }} requires confirm=yes."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.11.0
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.TF_AWS_REGION || 'us-east-1' }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Write backend.hcl
+        env:
+          TF_BACKEND_HCL: ${{ secrets.TF_BACKEND_HCL }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TF_AWS_REGION: ${{ vars.TF_AWS_REGION }}
+          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          if [ -n "$TF_BACKEND_HCL" ]; then
+            printf '%s\n' "$TF_BACKEND_HCL" > backend.hcl
+          elif [ -n "$TF_STATE_BUCKET" ]; then
+            printf '%s\n' \
+              "bucket       = \"${TF_STATE_BUCKET}\"" \
+              "key          = \"${TF_STATE_KEY:-split/db/terraform.tfstate}\"" \
+              "region       = \"${TF_AWS_REGION:-us-east-1}\"" \
+              "encrypt      = true" \
+              "use_lockfile = true" \
+              > backend.hcl
+          else
+            echo "::error::Set TF_STATE_BUCKET / TF_BACKEND_HCL (same S3 bucket as TechChallenge-infra-eks)."
+            exit 1
+          fi
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Prepare terraform.tfvars
+        run: cp terraform.tfvars.example terraform.tfvars
+
+      - name: Terraform init
+        run: terraform init -upgrade -backend-config=backend.hcl
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        if: inputs.action == 'plan'
+        run: terraform plan -no-color
+
+      - name: Terraform apply
+        if: inputs.action == 'apply' && inputs.confirm == 'yes'
+        run: terraform apply -auto-approve
+
+      - name: Terraform destroy
+        if: inputs.action == 'destroy' && inputs.confirm == 'yes'
+        run: terraform destroy -auto-approve
+
+      - name: Write job summary
+        if: inputs.action == 'apply' && inputs.confirm == 'yes'
+        run: |
+          {
+            echo "## Managed DB outputs"
+            echo ""
+            echo "**Enabled:** \`$(terraform output -raw enable_managed_db)\`"
+            echo ""
+            echo "**SSM path:** \`$(terraform output -raw mongodb_uri_ssm_path)\`"
+          } >> "$GITHUB_STEP_SUMMARY"

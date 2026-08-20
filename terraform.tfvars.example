@@ -1,0 +1,10 @@
+aws_region         = "us-east-1"
+enable_managed_db  = false
+atlas_project_name = "techchallenge-fiap"
+atlas_cluster_name = "techchallenge"
+atlas_region       = "US_EAST_1"
+database_name      = "Node-Fiap"
+ssm_prefix         = "/techchallenge"
+
+# Set via TF_VAR_ / GitHub Secrets when enable_managed_db = true:
+# atlas_public_key, atlas_private_key, atlas_org_id, db_password
