@@ -1,0 +1,72 @@
+name: CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type "yes" to deploy Mongo on EKS
+        required: true
+        default: ""
+
+concurrency:
+  group: cd-mongo-eks
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm deploy
+        if: inputs.confirm != 'yes'
+        run: |
+          echo "::error::Deploy requires confirm=yes."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.TF_AWS_REGION || 'us-east-1' }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --region "${{ vars.TF_AWS_REGION || 'us-east-1' }}" \
+            --name "${{ vars.TF_CLUSTER_NAME || 'techchallenge-eks' }}"
+
+      - name: Deploy MongoDB
+        run: |
+          if ! kubectl get storageclass gp2 >/dev/null 2>&1; then
+            kubectl apply -f k8s/mongo-storageclass.yml
+          else
+            echo "StorageClass gp2 already exists — skipping."
+          fi
+          kubectl apply -f k8s/mongo-pvc.yml
+          kubectl apply -f k8s/mongo-service.yml
+          kubectl apply -f k8s/mongo-deployment.yml
+          kubectl rollout status deployment/mongo-deployment --timeout=180s
+
+      - name: Publish in-cluster URI to SSM
+        run: |
+          aws ssm put-parameter \
+            --name /techchallenge/db/mongodb_uri \
+            --type String \
+            --value "mongodb://mongo-service:27017/Node-Fiap" \
+            --overwrite
+
+      - name: Write job summary
+        run: |
+          {
+            echo "## Mongo no EKS"
+            echo ""
+            echo "**Service:** \`mongo-service:27017\`"
+            echo "**SSM:** \`/techchallenge/db/mongodb_uri\`"
+            echo ""
+            echo '```'
+            kubectl get deploy mongo-deployment
+            kubectl get svc mongo-service
+            kubectl get pvc mongo-pvc
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
