@@ -38,6 +38,10 @@ Default **`enable_managed_db = false`**: `plan`/`apply` não criam Atlas.
 - `TF_STATE_BUCKET` — mesmo bucket do EKS
 - Variable `ENABLE_MANAGED_DB=true`
 
+## Documentação
+
+RFC-002 / ADR-002 (escolha do Mongo e Atlas): [docs/](docs/README.md). ER e relacionamentos: [modelo de dados no Fiap](https://github.com/RuannGodinho/TechChallenge-Fiap/blob/main/docs/ARQUITETURA-MODELO-DADOS.md).
+
 ## Cutover da API
 
 1. Apply deste repo com `enable_managed_db=true`.
