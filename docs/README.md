@@ -15,5 +15,5 @@ Este repositório documenta a **persistência gerenciada** (MongoDB Atlas M0, op
 | Assunto | Repositório |
 |---|---|
 | Coleções, ER, cardinalidades | [TechChallenge-Fiap — modelo de dados](https://github.com/RuannGodinho/TechChallenge-Fiap/blob/main/docs/ARQUITETURA-MODELO-DADOS.md) |
-| Mongo in-cluster (`k8s/mongo/`) | [TechChallenge-Fiap](https://github.com/RuannGodinho/TechChallenge-Fiap) |
+| Workloads da API | [TechChallenge-Fiap](https://github.com/RuannGodinho/TechChallenge-Fiap) |
 | Cluster EKS / Terraform AWS | [TechChallenge-infra-eks](https://github.com/RuannGodinho/TechChallenge-infra-eks/tree/main/docs) |
