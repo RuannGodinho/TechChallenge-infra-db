@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: execution-mongo-init-job
+spec:
+  activeDeadlineSeconds: 180
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: 'mongo:8'
+          command:
+            - /bin/sh
+            - '-ec'
+            - >
+              until mongosh --host execution-mongo-service:27017 --quiet --eval 'db.adminCommand({ping:1}).ok'
+              >/dev/null 2>&1; do sleep 1; done
+
+              mongosh --host execution-mongo-service:27017 --quiet --eval 'try { const config = rs.conf(); if
+              (config._id !== "execution-rs") throw new Error("Existing replica-set identity differs; manual
+              review required"); } catch (e) { if (e.codeName !== "NotYetInitialized") throw e;
+              rs.initiate({_id:"execution-rs",members:[{_id:0,host:"execution-mongo-service:27017"}]}); }'

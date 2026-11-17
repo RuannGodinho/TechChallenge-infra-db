@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: Type "yes" to deploy Mongo on EKS
+        description: Type "yes" to deploy service databases and RabbitMQ on EKS
         required: true
         default: ""
 
 concurrency:
-  group: cd-mongo-eks
+  group: cd-data-eks
   cancel-in-progress: false
 
 jobs:
@@ -36,37 +36,58 @@ jobs:
             --region "${{ vars.TF_AWS_REGION || 'us-east-1' }}" \
             --name "${{ vars.TF_CLUSTER_NAME || 'techchallenge-eks' }}"
 
-      - name: Deploy MongoDB
+      - name: Prepare infrastructure secrets
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          RABBITMQ_USER: ${{ secrets.RABBITMQ_USER }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+          RABBITMQ_VHOST: ${{ vars.RABBITMQ_VHOST || 'oficina' }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          for name, keys in [('billing-db-secrets', ['POSTGRES_PASSWORD']), ('rabbitmq-secrets', ['RABBITMQ_USER', 'RABBITMQ_PASSWORD', 'RABBITMQ_VHOST'])]:
+              missing = [key for key in keys if not os.environ.get(key)]
+              if missing:
+                  raise SystemExit('Missing infrastructure secrets: ' + ', '.join(missing))
+              payload = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': name}, 'type': 'Opaque', 'stringData': {key: os.environ[key] for key in keys}}
+              with open(os.path.join(os.environ['RUNNER_TEMP'], name + '.json'), 'w') as output:
+                  json.dump(payload, output)
+          PY
+          kubectl apply -f "$RUNNER_TEMP/billing-db-secrets.json"
+          kubectl apply -f "$RUNNER_TEMP/rabbitmq-secrets.json"
+
+      - name: Deploy persistent data workloads
         run: |
           if ! kubectl get storageclass gp2 >/dev/null 2>&1; then
             kubectl apply -f k8s/mongo-storageclass.yml
-          else
-            echo "StorageClass gp2 already exists — skipping."
           fi
-          kubectl apply -f k8s/mongo-pvc.yml
-          kubectl apply -f k8s/mongo-service.yml
-          kubectl apply -f k8s/mongo-deployment.yml
-          kubectl rollout status deployment/mongo-deployment --timeout=180s
+          for NAME in mongo execution-mongo postgres rabbitmq; do
+            kubectl apply -f "k8s/$NAME-pvc.yml"
+            kubectl apply -f "k8s/$NAME-service.yml"
+            kubectl apply -f "k8s/$NAME-deployment.yml"
+          done
+          for NAME in mongo execution-mongo; do
+            kubectl apply -f "k8s/$NAME-init-job.yml"
+            kubectl wait --for=condition=complete "job/$NAME-init-job" --timeout=180s
+          done
+          for NAME in mongo execution-mongo postgres rabbitmq; do
+            kubectl rollout status "deployment/$NAME-deployment" --timeout=180s
+          done
 
-      - name: Publish in-cluster URI to SSM
+      - name: Publish service addresses to SSM
         run: |
-          aws ssm put-parameter \
-            --name /techchallenge/db/mongodb_uri \
-            --type String \
-            --value "mongodb://mongo-service:27017/Node-Fiap" \
-            --overwrite
+          aws ssm put-parameter --name /techchallenge/db/mongodb_uri --type String \
+            --value 'mongodb://mongo-service:27017/Node-Fiap?replicaSet=orders-rs' --overwrite
+          aws ssm put-parameter --name /techchallenge/db/execution_mongodb_uri --type String \
+            --value 'mongodb://execution-mongo-service:27017/execution?replicaSet=execution-rs' --overwrite
+          aws ssm put-parameter --name /techchallenge/db/postgres_host --type String --value postgres-service --overwrite
+          aws ssm put-parameter --name /techchallenge/db/rabbitmq_host --type String --value rabbitmq-service --overwrite
 
       - name: Write job summary
         run: |
           {
-            echo "## Mongo no EKS"
-            echo ""
-            echo "**Service:** \`mongo-service:27017\`"
-            echo "**SSM:** \`/techchallenge/db/mongodb_uri\`"
-            echo ""
-            echo '```'
-            kubectl get deploy mongo-deployment
-            kubectl get svc mongo-service
-            kubectl get pvc mongo-pvc
-            echo '```'
+            echo '## Persistent databases and shared RabbitMQ'
+            kubectl get deploy mongo-deployment execution-mongo-deployment postgres-deployment rabbitmq-deployment
+            kubectl get svc mongo-service execution-mongo-service postgres-service rabbitmq-service
+            kubectl get pvc mongo-pvc execution-mongo-pvc postgres-pvc rabbitmq-pvc
           } >> "$GITHUB_STEP_SUMMARY"
