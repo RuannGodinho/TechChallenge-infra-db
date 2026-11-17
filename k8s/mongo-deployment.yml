@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: mongo
-          image: mongo:8
+          image: 'mongo:8'
           ports:
             - containerPort: 27017
           volumeMounts:
@@ -22,12 +22,29 @@ spec:
               mountPath: /data/db
           resources:
             requests:
-              memory: "256Mi"
-              cpu: "100m"
+              memory: 256Mi
+              cpu: 100m
             limits:
-              memory: "512Mi"
-              cpu: "500m"
+              memory: 512Mi
+              cpu: 500m
+          args:
+            - '--replSet'
+            - orders-rs
+            - '--bind_ip_all'
+          readinessProbe:
+            exec:
+              command:
+                - mongosh
+                - '--quiet'
+                - '--eval'
+                - 'quit(db.hello().isWritablePrimary ? 0 : 1)'
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
       volumes:
         - name: mongo-storage
           persistentVolumeClaim:
             claimName: mongo-pvc
+  strategy:
+    type: Recreate

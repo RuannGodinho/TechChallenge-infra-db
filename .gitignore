@@ -7,3 +7,6 @@
 backend.hcl
 crash.log
 crash.*.log
+
+# Local runtime secret manifests
+k8s/data-secrets.yml
